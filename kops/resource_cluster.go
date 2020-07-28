@@ -1,11 +1,22 @@
 package kops
 
 import (
-	"github.com/hashicorp/terraform/helper/schema"
+	"fmt"
+	"io/ioutil"
+
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"k8s.io/apimachinery/pkg/api/errors"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/assets"
+	"k8s.io/kops/pkg/commands"
+	"k8s.io/kops/pkg/kubeconfig"
+	"k8s.io/kops/pkg/resources"
+	"k8s.io/kops/pkg/resources/ops"
+	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
+	"k8s.io/kops/upup/pkg/fi/utils"
 )
 
 func resourceCluster() *schema.Resource {
@@ -18,21 +29,61 @@ func resourceCluster() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
-		Schema: map[string]*schema.Schema{
-			"metadata": schemaMetadata(),
-			"spec":     schemaClusterSpec(),
-		},
+		Schema: schemaCluster(),
 	}
 }
 
 func resourceClusterCreate(d *schema.ResourceData, m interface{}) error {
 	clientset := m.(*ProviderConfig).clientset
 
-	cluster, err := clientset.CreateCluster(&kops.Cluster{
-		ObjectMeta: expandObjectMeta(sectionData(d, "metadata")),
-		Spec:       expandClusterSpec(sectionData(d, "spec")),
-	})
+	cluster, err := clientset.CreateCluster(expandCluster(d))
 	if err != nil {
+		return err
+	}
+	cluster, err = clientset.GetCluster(cluster.Name)
+	if err != nil {
+		return err
+	}
+
+	channel, err := cloudup.ChannelForCluster(cluster)
+	if err != nil {
+		return err
+	}
+
+	instanceGroups := expandInstanceGroup(d)
+	for _, instanceGroup := range instanceGroups {
+		_, err = clientset.InstanceGroupsFor(cluster).Create(instanceGroup)
+		if err != nil {
+			break
+		}
+		fullInstanceGroup, err := cloudup.PopulateInstanceGroupSpec(cluster, instanceGroup, channel)
+		if err != nil {
+			break
+		}
+		_, err = clientset.InstanceGroupsFor(cluster).Update(fullInstanceGroup)
+		if err != nil {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	sshCredentialStore, err := clientset.SSHCredentialStore(cluster)
+	if err != nil {
+		return err
+	}
+	sshkeyPath := d.Get("sshkey_path").(string)
+	f := utils.ExpandPath(sshkeyPath)
+	pubKey, err := ioutil.ReadFile(f)
+	if err != nil {
+		return fmt.Errorf("error reading SSH key file %q: %v", f, err)
+	}
+	err = sshCredentialStore.AddSSHPublicKey(fi.SecretNameSSHPrimary, pubKey)
+	if err != nil {
+		return fmt.Errorf("error adding SSH public key: %v", err)
+	}
+	if err := cloudup.PerformAssignments(cluster); err != nil {
 		return err
 	}
 
@@ -52,22 +103,53 @@ func resourceClusterCreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
+	apply := &cloudup.ApplyClusterCmd{
+		Cluster:        cluster,
+		Clientset:      clientset,
+		TargetName:     cloudup.TargetDirect,
+		InstanceGroups: instanceGroups,
+		LifecycleOverrides: map[string]fi.Lifecycle{
+			"IAMRole":                "ExistsAndWarnIfChanges",
+			"IAMRolePolicy":          "ExistsAndWarnIfChanges",
+			"IAMInstanceProfileRole": "ExistsAndWarnIfChanges",
+		},
+	}
+
+	// if instanceGroupMaster.Spec.IAM != nil || instanceGroupNode.Spec.IAM != nil {
+	// 	apply.LifecycleOverrides = map[string]fi.Lifecycle{
+	// 		"IAMRole":                "ExistsAndWarnIfChanges",
+	// 		"IAMRolePolicy":          "ExistsAndWarnIfChanges",
+	// 		"IAMInstanceProfileRole": "ExistsAndWarnIfChanges",
+	// 	}
+	// }
+
+	err = apply.Run()
+	if err != nil {
+		return err
+	}
+
+	_, err = buildKubecfg(cluster, m)
+
 	d.SetId(cluster.Name)
 
 	return resourceClusterRead(d, m)
 }
 
 func resourceClusterRead(d *schema.ResourceData, m interface{}) error {
+	clientset := m.(*ProviderConfig).clientset
+
 	cluster, err := getCluster(d, m)
 	if err != nil {
 		return err
 	}
-	if err := d.Set("metadata", flattenObjectMeta(cluster.ObjectMeta)); err != nil {
+
+	instanceGroups, err := clientset.InstanceGroupsFor(cluster).List(v1.ListOptions{})
+	if err != nil {
 		return err
 	}
-	if err := d.Set("spec", flattenClusterSpec(cluster.Spec)); err != nil {
-		return err
-	}
+
+	flattenCluster(d, cluster, instanceGroups)
+
 	return nil
 }
 
@@ -79,11 +161,53 @@ func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
 
 	clientset := m.(*ProviderConfig).clientset
 
-	_, err := clientset.UpdateCluster(&kops.Cluster{
-		ObjectMeta: expandObjectMeta(sectionData(d, "metadata")),
-		Spec:       expandClusterSpec(sectionData(d, "spec")),
-	}, nil)
+	cluster := expandCluster(d)
 
+	channel, err := cloudup.ChannelForCluster(cluster)
+	if err != nil {
+		return err
+	}
+
+	instanceGroups := expandInstanceGroup(d)
+	for _, instanceGroup := range instanceGroups {
+		fullInstanceGroup, err := cloudup.PopulateInstanceGroupSpec(cluster, instanceGroup, channel)
+		if err != nil {
+			break
+		}
+		_, err = clientset.InstanceGroupsFor(cluster).Update(fullInstanceGroup)
+		if err != nil {
+			break
+		}
+
+	}
+	if err != nil {
+		return err
+	}
+
+	assetBuilder := assets.NewAssetBuilder(cluster, "")
+	fullCluster, err := cloudup.PopulateClusterSpec(clientset, cluster, assetBuilder)
+	if err != nil {
+		return err
+	}
+
+	_, err = clientset.UpdateCluster(fullCluster, nil)
+	if err != nil {
+		return err
+	}
+
+	apply := &cloudup.ApplyClusterCmd{
+		Cluster:        cluster,
+		Clientset:      clientset,
+		TargetName:     cloudup.TargetDirect,
+		InstanceGroups: instanceGroups,
+		LifecycleOverrides: map[string]fi.Lifecycle{
+			"IAMRole":                "ExistsAndWarnIfChanges",
+			"IAMRolePolicy":          "ExistsAndWarnIfChanges",
+			"IAMInstanceProfileRole": "ExistsAndWarnIfChanges",
+		},
+	}
+
+	err = apply.Run()
 	if err != nil {
 		return err
 	}
@@ -98,7 +222,37 @@ func resourceClusterDelete(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	return clientset.DeleteCluster(cluster)
+	cloud, err := cloudup.BuildCloud(cluster)
+	if err != nil {
+		return err
+	}
+
+	resourcesList, err := ops.ListResources(cloud, cluster.Name, "")
+	if err != nil {
+		return err
+	}
+
+	clusterResources := make(map[string]*resources.Resource)
+	for k, resource := range resourcesList {
+		if resource.Shared {
+			continue
+		}
+		clusterResources[k] = resource
+	}
+
+	err = ops.DeleteResources(cloud, clusterResources)
+	if err != nil {
+		return err
+	}
+
+	err = clientset.DeleteCluster(cluster)
+	if err != nil {
+		return err
+	}
+
+	d.SetId("")
+
+	return nil
 }
 
 func resourceClusterExists(d *schema.ResourceData, m interface{}) (bool, error) {
@@ -119,6 +273,24 @@ func getCluster(d *schema.ResourceData, m interface{}) (*kops.Cluster, error) {
 	return cluster, err
 }
 
-func sectionData(d *schema.ResourceData, section string) map[string]interface{} {
-	return d.Get(section).([]interface{})[0].(map[string]interface{})
+func buildKubecfg(cluster *kops.Cluster, m interface{}) (*kubeconfig.KubeconfigBuilder, error) {
+	clientset := m.(*ProviderConfig).clientset
+	keyStore, err := clientset.KeyStore(cluster)
+	if err != nil {
+		return nil, err
+	}
+
+	secretStore, err := clientset.SecretStore(cluster)
+	if err != nil {
+		return nil, err
+	}
+
+	conf, err := kubeconfig.BuildKubecfg(cluster, keyStore, secretStore, &commands.CloudDiscoveryStatusStore{}, clientcmd.NewDefaultPathOptions())
+
+	if err != nil {
+		return nil, err
+	}
+
+	conf.WriteKubecfg()
+	return conf, nil
 }

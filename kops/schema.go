@@ -1,8 +1,8 @@
 package kops
 
 import (
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
 
 func schemaMetadata() *schema.Schema {
@@ -92,7 +92,7 @@ func schemaStringInSliceOptional(slice []string) *schema.Schema {
 	}
 }
 
-func schemaStringInSliceOptionaDefault(slice []string, def string) *schema.Schema {
+func schemaStringInSliceOptionalDefault(slice []string, def string) *schema.Schema {
 	return &schema.Schema{
 		Type:         schema.TypeString,
 		Optional:     true,
@@ -103,15 +103,33 @@ func schemaStringInSliceOptionaDefault(slice []string, def string) *schema.Schem
 
 func schemaIntOptional() *schema.Schema {
 	return &schema.Schema{
-		Type:     schema.TypeInt,
+		// Type: schema.TypeInt,
+		Type:     schema.TypeString,
 		Optional: true,
+	}
+}
+
+func schemaIntOptionalComputed() *schema.Schema {
+	return &schema.Schema{
+		// Type: schema.TypeInt,
+		Type:     schema.TypeString,
+		Optional: true,
+		Computed: true,
 	}
 }
 
 func schemaBoolOptional() *schema.Schema {
 	return &schema.Schema{
-		Type:     schema.TypeBool,
+		Type:     schema.TypeString,
 		Optional: true,
+	}
+}
+
+func schemaBoolOptionalComputed() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeString,
+		Optional: true,
+		Computed: true,
 	}
 }
 
@@ -127,6 +145,15 @@ func schemaStringSliceOptional() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Optional: true,
+		Elem:     &schema.Schema{Type: schema.TypeString},
+	}
+}
+
+func schemaStringSliceOptionalComputed() *schema.Schema {
+	return &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		Computed: true,
 		Elem:     &schema.Schema{Type: schema.TypeString},
 	}
 }
