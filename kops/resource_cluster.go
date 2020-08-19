@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/assets"
+	"k8s.io/kops/pkg/client/simple"
 	"k8s.io/kops/pkg/commands"
 	"k8s.io/kops/pkg/kubeconfig"
 	"k8s.io/kops/pkg/resources"
@@ -153,23 +154,35 @@ func resourceClusterRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
-func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
-	if ok, _ := resourceClusterExists(d, m); !ok {
-		d.SetId("")
-		return nil
+func ifInstanceGroupExists(cluster *kops.Cluster, ig *kops.InstanceGroup, clientset simple.Clientset) bool {
+	instanceGroup, err := clientset.InstanceGroupsFor(cluster).Get(ig.ObjectMeta.Name, v1.GetOptions{})
+	if err == nil && instanceGroup != nil {
+		return true
 	}
 
+	return false
+}
+
+func resourceInstanceGroupHandle(d *schema.ResourceData, m interface{}) ([]*kops.InstanceGroup, error) {
 	clientset := m.(*ProviderConfig).clientset
-
+	instanceGroups := expandInstanceGroup(d)
 	cluster := expandCluster(d)
-
+	cluster, err := clientset.GetCluster(cluster.Name)
+	if err != nil {
+		return instanceGroups, err
+	}
 	channel, err := cloudup.ChannelForCluster(cluster)
 	if err != nil {
-		return err
+		return instanceGroups, err
 	}
 
-	instanceGroups := expandInstanceGroup(d)
 	for _, instanceGroup := range instanceGroups {
+		if !ifInstanceGroupExists(cluster, instanceGroup, clientset) {
+			_, err = clientset.InstanceGroupsFor(cluster).Create(instanceGroup)
+			if err != nil {
+				break
+			}
+		}
 		fullInstanceGroup, err := cloudup.PopulateInstanceGroupSpec(cluster, instanceGroup, channel)
 		if err != nil {
 			break
@@ -178,8 +191,24 @@ func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
 		if err != nil {
 			break
 		}
-
 	}
+
+	if err != nil {
+		return instanceGroups, err
+	}
+
+	return instanceGroups, nil
+}
+
+func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
+	if ok, _ := resourceClusterExists(d, m); !ok {
+		d.SetId("")
+		return nil
+	}
+	clientset := m.(*ProviderConfig).clientset
+	cluster := expandCluster(d)
+
+	instanceGroups, err := resourceInstanceGroupHandle(d, m)
 	if err != nil {
 		return err
 	}
