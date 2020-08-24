@@ -154,52 +154,6 @@ func resourceClusterRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
-func ifInstanceGroupExists(cluster *kops.Cluster, ig *kops.InstanceGroup, clientset simple.Clientset) bool {
-	instanceGroup, err := clientset.InstanceGroupsFor(cluster).Get(ig.ObjectMeta.Name, v1.GetOptions{})
-	if err == nil && instanceGroup != nil {
-		return true
-	}
-
-	return false
-}
-
-func resourceInstanceGroupHandle(d *schema.ResourceData, m interface{}) ([]*kops.InstanceGroup, error) {
-	clientset := m.(*ProviderConfig).clientset
-	instanceGroups := expandInstanceGroup(d)
-	cluster := expandCluster(d)
-	cluster, err := clientset.GetCluster(cluster.Name)
-	if err != nil {
-		return instanceGroups, err
-	}
-	channel, err := cloudup.ChannelForCluster(cluster)
-	if err != nil {
-		return instanceGroups, err
-	}
-
-	for _, instanceGroup := range instanceGroups {
-		if !ifInstanceGroupExists(cluster, instanceGroup, clientset) {
-			_, err = clientset.InstanceGroupsFor(cluster).Create(instanceGroup)
-			if err != nil {
-				break
-			}
-		}
-		fullInstanceGroup, err := cloudup.PopulateInstanceGroupSpec(cluster, instanceGroup, channel)
-		if err != nil {
-			break
-		}
-		_, err = clientset.InstanceGroupsFor(cluster).Update(fullInstanceGroup)
-		if err != nil {
-			break
-		}
-	}
-
-	if err != nil {
-		return instanceGroups, err
-	}
-
-	return instanceGroups, nil
-}
-
 func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
 	if ok, _ := resourceClusterExists(d, m); !ok {
 		d.SetId("")
@@ -208,7 +162,7 @@ func resourceClusterUpdate(d *schema.ResourceData, m interface{}) error {
 	clientset := m.(*ProviderConfig).clientset
 	cluster := expandCluster(d)
 
-	instanceGroups, err := resourceInstanceGroupHandle(d, m)
+	instanceGroups, err := updateInstanceGroup(d, m)
 	if err != nil {
 		return err
 	}
@@ -300,6 +254,56 @@ func getCluster(d *schema.ResourceData, m interface{}) (*kops.Cluster, error) {
 	clientset := m.(*ProviderConfig).clientset
 	cluster, err := clientset.GetCluster(d.Id())
 	return cluster, err
+}
+
+func getInstanceGroup(cluster *kops.Cluster, ig *kops.InstanceGroup, clientset simple.Clientset) (*kops.InstanceGroup, error) {
+	instanceGroup, err := clientset.InstanceGroupsFor(cluster).Get(ig.ObjectMeta.Name, v1.GetOptions{})
+	if err != nil {
+		return instanceGroup, err
+	}
+
+	return instanceGroup, nil
+}
+
+func updateInstanceGroup(d *schema.ResourceData, m interface{}) ([]*kops.InstanceGroup, error) {
+	clientset := m.(*ProviderConfig).clientset
+	instanceGroups := expandInstanceGroup(d)
+	cluster := expandCluster(d)
+	cluster, err := clientset.GetCluster(cluster.Name)
+	if err != nil {
+		return instanceGroups, err
+	}
+	channel, err := cloudup.ChannelForCluster(cluster)
+	if err != nil {
+		return instanceGroups, err
+	}
+
+	for _, instanceGroup := range instanceGroups {
+		ig, err := getInstanceGroup(cluster, instanceGroup, clientset)
+		if err != nil {
+			break
+		}
+		if ig == nil {
+			_, err = clientset.InstanceGroupsFor(cluster).Create(instanceGroup)
+			if err != nil {
+				break
+			}
+		}
+		fullInstanceGroup, err := cloudup.PopulateInstanceGroupSpec(cluster, instanceGroup, channel)
+		if err != nil {
+			break
+		}
+		_, err = clientset.InstanceGroupsFor(cluster).Update(fullInstanceGroup)
+		if err != nil {
+			break
+		}
+	}
+
+	if err != nil {
+		return instanceGroups, err
+	}
+
+	return instanceGroups, nil
 }
 
 func buildKubecfg(cluster *kops.Cluster, m interface{}) (*kubeconfig.KubeconfigBuilder, error) {
