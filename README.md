@@ -26,13 +26,6 @@
 
 # Usage
 
-### Checkout 
-```
-git clone git@github.com:mataneine/terraform-provider-kops.git
-cd terraform-provider-kops
-git checkout kops-1.16.0
-```
-
 ### Build
 ```
 go mod vendor
