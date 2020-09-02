@@ -1,7 +1,7 @@
 package kops
 
 import (
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
 func dataSourceCluster() *schema.Resource {
@@ -10,9 +10,6 @@ func dataSourceCluster() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
-		Schema: map[string]*schema.Schema{
-			"metadata": schemaMetadata(),
-			"spec":     schemaClusterSpec(),
-		},
+		Schema: schemaCluster(),
 	}
 }

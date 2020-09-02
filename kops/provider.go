@@ -2,8 +2,9 @@ package kops
 
 import (
 	"fmt"
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/terraform"
+
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kops/pkg/client/simple"
 	"k8s.io/kops/pkg/client/simple/vfsclientset"
@@ -19,13 +20,14 @@ Trailing slash will be trimmed.`
 
 // ProviderConfig kops provider config structure
 type ProviderConfig struct {
-	stateStore string
-	clientset  simple.Clientset
+	stateStore       string
+	clientset        simple.Clientset
+	terraformVersion string
 }
 
 // Provider exported for main package
 func Provider() terraform.ResourceProvider {
-	return &schema.Provider{
+	provider := &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"state_store": {
 				Type:        schema.TypeString,
@@ -33,21 +35,32 @@ func Provider() terraform.ResourceProvider {
 				DefaultFunc: schema.EnvDefaultFunc("KOPS_STATE_STORE", nil),
 				Description: descriptions["state_store"],
 			},
+			"aws": schemaAWSConfig(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
-			"kops_cluster":        dataSourceCluster(),
-			"kops_instance_group": dataSourceInstanceGroup(),
+			"kops_cluster": dataSourceCluster(),
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"kops_cluster":        resourceCluster(),
-			"kops_instance_group": resourceInstanceGroup(),
+			"kops_cluster": resourceCluster(),
 		},
-		ConfigureFunc: configureProvider,
 	}
+
+	provider.ConfigureFunc = func(d *schema.ResourceData) (interface{}, error) {
+		terraformVersion := provider.TerraformVersion
+		if terraformVersion == "" {
+			// Terraform 0.12 introduced this field to the protocol
+			// We can therefore assume that if it's missing it's 0.10 or 0.11
+			terraformVersion = "0.11+compatible"
+		}
+		return providerConfigure(d, terraformVersion)
+	}
+
+	return provider
 }
 
-func configureProvider(data *schema.ResourceData) (interface{}, error) {
-	registryPath := data.Get("state_store").(string)
+func providerConfigure(d *schema.ResourceData, terraformVersion string) (interface{}, error) {
+	expandAWSConfig(d)
+	registryPath := d.Get("state_store").(string)
 
 	basePath, err := vfs.Context.BuildVfsPath(registryPath)
 	if err != nil {
@@ -61,8 +74,9 @@ func configureProvider(data *schema.ResourceData) (interface{}, error) {
 	clientset := vfsclientset.NewVFSClientset(basePath, true)
 
 	return &ProviderConfig{
-		clientset:  clientset,
-		stateStore: registryPath,
+		clientset:        clientset,
+		stateStore:       registryPath,
+		terraformVersion: terraformVersion,
 	}, nil
 }
 

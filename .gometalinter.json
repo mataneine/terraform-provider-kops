@@ -9,7 +9,7 @@
     "vet": {"Command": "go vet -mod vendor ./..."}
   },
   "Exclude": [
-    "hack",
+    "models",
     "vendor"
   ],
 

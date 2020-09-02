@@ -5,6 +5,7 @@ hs_err_pid*
 .project
 .settings
 .idea
+.vscode
 *.iml
 virt
 dist
