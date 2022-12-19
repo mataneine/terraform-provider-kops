@@ -41,30 +41,12 @@ replace k8s.io/metrics => k8s.io/metrics v0.0.0-20190819143841-305e1cef1ab1
 replace k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.0.0-20190819143045-c84c31c165c4
 
 require (
-	github.com/aws/aws-sdk-go v1.30.3
+	github.com/aws/aws-sdk-go v1.44.162
 	github.com/hashicorp/terraform-plugin-sdk v1.9.0
-	k8s.io/api v0.0.0 // indirect
-	k8s.io/apiextensions-apiserver v0.0.0 // indirect
+	github.com/stretchr/testify v1.5.1 // indirect
 	k8s.io/apimachinery v0.0.0
-	k8s.io/apiserver v0.0.0 // indirect
-	k8s.io/cli-runtime v0.0.0 // indirect
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
-	k8s.io/cloud-provider v0.0.0 // indirect
-	k8s.io/cluster-bootstrap v0.0.0 // indirect
-	k8s.io/code-generator v0.0.0 // indirect
-	k8s.io/component-base v0.0.0 // indirect
-	k8s.io/cri-api v0.18.0 // indirect
-	k8s.io/csi-translation-lib v0.0.0 // indirect
 	k8s.io/kops v1.16.0
-	k8s.io/kube-aggregator v0.0.0 // indirect
-	k8s.io/kube-controller-manager v0.0.0 // indirect
-	k8s.io/kube-proxy v0.0.0 // indirect
-	k8s.io/kube-scheduler v0.0.0 // indirect
-	k8s.io/kubelet v0.0.0 // indirect
-	k8s.io/kubernetes v1.15.3 // indirect
-	k8s.io/legacy-cloud-providers v0.0.0 // indirect
-	k8s.io/metrics v0.0.0 // indirect
-	k8s.io/sample-apiserver v0.0.0 // indirect
 )
 
 go 1.13
