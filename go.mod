@@ -41,7 +41,7 @@ replace k8s.io/metrics => k8s.io/metrics v0.0.0-20190819143841-305e1cef1ab1
 replace k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.0.0-20190819143045-c84c31c165c4
 
 require (
-	github.com/aws/aws-sdk-go v1.44.162
+	github.com/aws/aws-sdk-go v1.44.194
 	github.com/hashicorp/terraform-plugin-sdk v1.17.2
 	github.com/vmihailenco/msgpack v4.0.1+incompatible // indirect
 	google.golang.org/grpc/examples v0.0.0-20221217010204-54b7d03e0ff0 // indirect
